@@ -1,3 +1,6 @@
+# From Pyhton Cookbook
+# Credit: Sébastien Keim
+# https://www.oreilly.com/library/view/python-cookbook/0596001673/ch05s19.html
 class RingBuffer:
     """ class that implements a not-yet-full buffer """
     def __init__(self,size_max):

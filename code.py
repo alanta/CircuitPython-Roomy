@@ -206,6 +206,7 @@ class Application:
         
         print("Connected, IP {0}.".format(wifi.radio.ipv4_address))
         self.pool = socketpool.SocketPool(wifi.radio)
+        self.https = requests.Session(self.pool, ssl.create_default_context())
         self.status=STATUS_CONNECTED
         self.connected=True
         return self.pool
@@ -244,9 +245,8 @@ class Application:
             await asynccp.delay(seconds=5)
 
         try:
-            https = requests.Session(self.pool, ssl.create_default_context())
             self.status = STATUS_FETCHING
-            with https.get(secrets['weather_api']) as response:
+            with self.https.get(secrets['weather_api']) as response:
                 if response.status_code != 200:
                     print("Weather API response is {}".format(response.status_code))
                     self.status = STATUS_FAILED
@@ -270,7 +270,7 @@ class Application:
                         report = None
                         response.close()
                         gc.collect()
-            
+                
             # d0weer d0tmin d0tmax => Vandaag {weer} {min} tot {max} graden
         except Exception as ex:
             print('Weather API failed, retrying on the next run')
