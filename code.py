@@ -22,11 +22,11 @@ import analogio
 import adafruit_dotstar
 # Sensor
 import adafruit_bme680
+import adafruit_apds9960.apds9960
 
 # Async
 import asynccp
 from asynccp.time import Duration
-import ringbuffer
 import gc
 
 import sys
@@ -137,6 +137,14 @@ class Application:
         printDateTime("RTC reports UTC is ", now)
         self.environmentalSensor = adafruit_bme680.Adafruit_BME680_I2C(i2c, refresh_rate=1)
         print('Ambient temperature: {} °C'.format(self.environmentalSensor.temperature))
+        self.lightSensor = adafruit_apds9960.apds9960.APDS9960(i2c)
+        self.lightSensor.enable_proximity = True
+        self.lightSensor.enable_gesture = True
+        self.lightSensor.enable_color = True
+        # https://github.com/adafruit/Adafruit_CircuitPython_APDS9960/blob/main/examples/apds9960_proximity_simpletest.py
+        # int_pin = digitalio.DigitalInOut(board.D5) # TODO connect the interrupt line and pick the port
+        # self.lightSensor.proximity_interrupt_threshold = (0, 175)
+        # self.lightSensor.enable_proximity_interrupt = True
         # Create a reference to the ambient light sensor so we can read it's value
         self.brightnessReadings = RingBuffer(20)
         self.light = analogio.AnalogIn(board.AMB)
@@ -150,17 +158,23 @@ class Application:
 
     async def sampleAmbientLight(self):
         #any value of 20k => 100%
-        light = self.light.value
-        if( light >= 20000 ):
+        #light = self.light.value
+        #if( light >= 20000 ):
+        #    self.brightnessReadings.append( 1.0 )
+        #else:
+        #    self.brightnessReadings.append(((light - 516) / 19484 * 0.99) +0.01)
+        r, g, b, c =  self.lightSensor.color_data
+        if( c >= 20000 ):
             self.brightnessReadings.append( 1.0 )
         else:
-            self.brightnessReadings.append(((light - 516) / 19484 * 0.99) +0.01)
+            self.brightnessReadings.append( max(0.01, round(c / 20000, 1)) )
+        
 
     async def adjustBrightness(self):
         buffer = self.brightnessReadings.get()
         avg = sum(buffer)/len(buffer)
         # clamp
-        if( avg < 0 ):
+        if( avg <= 0 ):
             avg = 0.01
         if avg > 1 :
             avg = 1
@@ -226,6 +240,27 @@ class Application:
         except Exception as ex:
             print('Weather API failed, retrying on the next run')
             traceback.print_exception(ex, ex, ex.__traceback__)
+
+    async def handleGesture(self):
+        gesture = self.lightSensor.gesture()
+
+        if gesture == 0x01:
+            print("up")
+        elif gesture == 0x02:
+            print("down")
+        elif gesture == 0x03:
+            print("left")
+        elif gesture == 0x04:
+            print("right")
+
+        # r, g, b, c =  self.lightSenso.color_data
+        # print("red: ", r)
+        # print("green: ", g)
+        # print("blue: ", b)
+        # print("clear: ", c)
+
+        # print("color temp {}".format(colorutility.calculate_color_temperature(r, g, b)))
+        # print("light lux {}".format(colorutility.calculate_lux(r, g, b)))
 
     async def updateTime(self):
         while True:
@@ -303,6 +338,7 @@ asynccp.run_later(0.5, app.connectWifi())
 asynccp.schedule_later(hz=Duration.of_hours(24), coroutine_function=app.syncWithNtp)
 asynccp.schedule(frequency=3, coroutine_function=app.sampleAmbientLight)
 asynccp.schedule(frequency=0.5, coroutine_function=app.adjustBrightness)
+asynccp.schedule(frequency=10, coroutine_function=app.handleGesture)
 asynccp.schedule(frequency=Duration.of_seconds(30), coroutine_function=app.sampleEnvironment)
 feathers2.led_set(False)
 asynccp.run()
