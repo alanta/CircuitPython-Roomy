@@ -22,7 +22,12 @@ import analogio
 import adafruit_dotstar
 # Sensor
 import adafruit_bme680
+from adafruit_io.adafruit_io import IO_HTTP, AdafruitIO_RequestError
 import adafruit_apds9960.apds9960
+from adafruit_apds9960 import colorutility
+
+# Telemetry
+from application_insights import Telemetry, Severity
 
 # Async
 import asynccp
@@ -41,6 +46,7 @@ dotstar = adafruit_dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1, brigh
 
 # Clock
 import adafruit_ds3231
+from time import struct_time
 
 from secrets import secrets
 
@@ -74,8 +80,8 @@ class NightwatchUI:
         self.display = display
         self.font60 = bitmap_font.load_font("/NotoSans-Bold-60.bdf") #terminalio.FONT
         self.font24 = bitmap_font.load_font("/NotoSans-Bold-24.bdf") #terminalio.FONT
+
         self.splash = displayio.Group()
-        display.show(self.splash)
         text_group = displayio.Group()
         self.time = label.Label(self.font60, text="            ", color=0xFFFF00)
         self.time.y = 25
@@ -88,11 +94,12 @@ class NightwatchUI:
         self.ambient = label.Label(terminalio.FONT, scale=2, text="                                ", color=0xFFFFFF)
         self.ambient.y = 170
 
-        text_group.append(self.time)  # Subgroup for text scaling
+        text_group.append(self.time)
         text_group.append(self.date)
         self.splash.append(text_group)
         self.splash.append(self.weather)
         self.splash.append(self.ambient)
+        display.show(self.splash)
 
  
   #user defined function of class
@@ -150,11 +157,15 @@ class Application:
         self.light = analogio.AnalogIn(board.AMB)
         self.status = STATUS_NO_CONNECTION
         self.connected = False
+        self.telemetry = Telemetry(secrets['ai_key'], secrets['ai_url'], debug=True)
 
     async def sampleEnvironment(self):
         self.ambientTemperature = self.environmentalSensor.temperature
         self.ambientHumidity = self.environmentalSensor.humidity
         self.ui.renderAmbient(self.ambientTemperature, self.ambientHumidity)
+        #if( self.connected ):
+        #    self.io.send_data("ambient-temperature", self.ambientTemperature)
+        #    self.io.send_data("ambient-humidity", self.ambientTemperature)
 
     async def sampleAmbientLight(self):
         #any value of 20k => 100%
@@ -208,7 +219,7 @@ class Application:
 
     # connect to wifi
     async def connectWifi(self):
-        print("Connectiong to wifi")
+        print("Connecting to wifi")
         self.status=STATUS_CONNECTING
         while not wifi.radio.ap_info:
             try:
@@ -223,7 +234,31 @@ class Application:
         self.https = requests.Session(self.pool, ssl.create_default_context())
         self.status=STATUS_CONNECTED
         self.connected=True
+        #self._setupAdafruitIO()
         return self.pool
+
+    def utcnow(self):
+        return to_datetime(self.rtc.datetime)
+
+    async def uploadTelemetry(self):
+        self.telemetry.trace('Ping', Severity.Information, timestamp = self.utcnow().isoformat())
+
+        if not self.connected:
+            return
+        
+        await self.telemetry.upload_telemetry(self.https)
+
+    def _setupAdafruitIO(self):
+        self.io = IO_HTTP(secrets["aio_username"], secrets["aio_key"], self.https)
+        try:
+            ambient_t_feed = self.io.get_feed("ambient-temperature")
+        except AdafruitIO_RequestError:
+            ambient_t_feed = self.io.create_new_feed("ambient-temperature")
+
+        try:
+            ambient_h_feed = self.io.get_feed("ambient-humidity")
+        except AdafruitIO_RequestError:
+            ambient_h_feed = self.io.create_new_feed("ambient-humidity")
 
     async def syncWithNtp(self):
         if( not self.connected ):
@@ -239,6 +274,7 @@ class Application:
             await asynccp.delay(Duration.of_hours(24))
         except Exception as ex:
             print('Weather API failed, retrying on the next run')
+            self.telemetry.exception(ex, Severity.Information, timestamp = self.utcnow().isoformat())
             traceback.print_exception(ex, ex, ex.__traceback__)
 
     async def handleGesture(self):
@@ -270,6 +306,7 @@ class Application:
                 ui.renderTime(current)           
             except Exception as ex:
                 print('updateTime failed')
+                self.telemetry.exception(ex, Severity.Information, timestamp = self.utcnow().isoformat())
                 traceback.print_exception(ex, ex, ex.__traceback__)
             finally:
                 await asynccp.delay(seconds=60-self.rtc.datetime.tm_sec) # sleep the rest of the minute  
@@ -309,6 +346,7 @@ class Application:
             # d0weer d0tmin d0tmax => Vandaag {weer} {min} tot {max} graden
         except Exception as ex:
             print('Weather API failed, retrying on the next run')
+            self.telemetry.exception(ex, Severity.Information, timestamp = self.utcnow().isoformat())
             traceback.print_exception(ex, ex, ex.__traceback__)
             if( not wifi.radio.ap_info ):
                 print('Wifi connection was dropped')
@@ -318,8 +356,11 @@ def printDateTime( str, current ):
     "Write the current date and time"
     print('{} {}/{}/{} {:02}:{:02}:{:02}'.format(str, current.tm_mday, current.tm_mon, current.tm_year, current.tm_hour, current.tm_min, current.tm_sec))
 
-def toLocalDateTime(current):
-    utc = datetime(current.tm_year, current.tm_mon, current.tm_mday, current.tm_hour, current.tm_min, current.tm_sec)
+def to_datetime(current:struct_time) -> datetime:
+    return datetime(current.tm_year, current.tm_mon, current.tm_mday, current.tm_hour, current.tm_min, current.tm_sec)
+
+def toLocalDateTime(current:struct_time) -> datetime:
+    utc = to_datetime(current)
     now = TimeZoneAmsterdam().fromutc(utc)
     return now
 
@@ -330,7 +371,6 @@ display.brightness = 1
 ui = NightwatchUI(display)
 app = Application(ui)
 
-
 asynccp.add_task(app.updateTime())
 asynccp.add_task(app.updateStatusLed())
 asynccp.schedule(frequency=Duration.of_minutes(5), coroutine_function=app.updateWeather)
@@ -340,5 +380,6 @@ asynccp.schedule(frequency=3, coroutine_function=app.sampleAmbientLight)
 asynccp.schedule(frequency=0.5, coroutine_function=app.adjustBrightness)
 asynccp.schedule(frequency=10, coroutine_function=app.handleGesture)
 asynccp.schedule(frequency=Duration.of_seconds(30), coroutine_function=app.sampleEnvironment)
+asynccp.schedule(frequency=Duration.of_minutes(5), coroutine_function=app.uploadTelemetry)
 feathers2.led_set(False)
 asynccp.run()
