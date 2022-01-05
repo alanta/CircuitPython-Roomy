@@ -7,6 +7,25 @@ import board
 import os
 import traceback
 
+# Application Insights SDK for CircuitPython
+#
+# This is a (very) rudimentry ApplicationInsights SDK for CircuitPython and allows you to log traces, metrics and exceptions to Azure
+#
+# Requirements
+# * CircuitPython 7.0 or better
+# * A board with Wifi and plenty of RAM
+#
+# Setup
+# * Create an AppInsights resource in azure, note the instrumentation key and ingestion endpoint
+# * Create a Telemetry object in your code
+# * Add telemetry by calling the trace, metric or exception methods
+# * Schedule a periodic task to invoke upload_telemetry to upload data to ApplicationInsights
+#
+# ⚠ Warning
+# This was developed and tested on an UnexpectedMaker Feather S2 that has tons of RAM and Wifi built in
+# Please be aware that the data to be uploaded to AI will be kept in memory until uploaded. If you collect a lot of 
+# telemetry or wait too long to upload the data you're likely to run out of memory
+
 
 # https://github.com/microsoft/ApplicationInsights-JS/blob/master/shared/AppInsightsCommon/src/Interfaces/Contracts/Generated/SeverityLevel.ts
 class Severity:
@@ -34,6 +53,7 @@ class Telemetry:
         self._pendingData = []
 
     def trace(self, message:str, severity:int = Severity.Verbose, timestamp:str = None):
+        # https://github.com/microsoft/ApplicationInsights-JS/blob/master/shared/AppInsightsCommon/src/Telemetry/Trace.ts
         telemetry = {
             "time": datetime.now().isoformat() if timestamp is None else timestamp,
             "name": "Microsoft.ApplicationInsights.{}.Message".format(self.instrumentationKey.replace('-', '')),
@@ -76,6 +96,31 @@ class Telemetry:
         }
         self._pendingData.append(telemetry)
 
+    def metric(self, name:str, value, count:int=None, min:float=None, max: float=None, stdDev: float=None, timestamp:str = None):
+        telemetry = {
+            "time": datetime.now().isoformat() if timestamp is None else timestamp,
+            "name": "Microsoft.ApplicationInsights.{}.Metric".format(self.instrumentationKey.replace('-', '')),
+            "iKey": self.instrumentationKey,
+            "tags": self._defaultTags,
+            "data": {
+                "baseType": "MetricData",
+                "baseData": {
+                    "ver": 2,
+                    "metrics": [{ # only one metric can be passed in
+                      "name": name,
+                      "value": value,
+                      "count": count,
+                      "max": max,
+                      "min": min,
+                      "stdDev": stdDev
+                    }]
+                    # "properties":
+                    # "measurements"
+                }
+            }
+        }
+        self._pendingData.append(telemetry)
+
     async def upload_telemetry(self, requests: requests.Session):
         if len(self._pendingData) == 0:
             return
@@ -94,33 +139,10 @@ class Telemetry:
             if( self._debug ):
                 print("Response: {}".format(response.text))
 
-        ## https://github.com/microsoft/ApplicationInsights-JS/blob/22d3787cb9b328bbf3cab0ee38a686d4779f8031/shared/AppInsightsCommon/src/Interfaces/PartAExtensions.ts
-        ## https://github.com/microsoft/ApplicationInsights-JS/blob/master/shared/AppInsightsCommon/src/Interfaces/Contracts/Generated/ContextTagKeys.ts
+## Relevant info in the AI Javascript SDK
+## https://github.com/microsoft/ApplicationInsights-JS/blob/master/shared/AppInsightsCommon/src/Interfaces/PartAExtensions.ts
+## https://github.com/microsoft/ApplicationInsights-JS/blob/master/shared/AppInsightsCommon/src/Interfaces/Contracts/Generated/ContextTagKeys.ts
+## https://github.com/microsoft/ApplicationInsights-JS/blob/master/channels/applicationinsights-channel-js/src/EnvelopeCreator.ts
 
-    ## https://github.com/microsoft/ApplicationInsights-JS/blob/master/channels/applicationinsights-channel-js/src/EnvelopeCreator.ts
-    ## Sample 4.0 schema
-    ##  {
-    ##     "time" : "2018-09-05T22:51:22.4936Z",
-    ##     "name" : ""Microsoft.ApplicationInsights.{0}.Message"",
-    ##     "iKey" : "ABC-5a4cbd20-e601-4ef5-a3c6-5d6577e4398e",
-    ##     "ext": {  
-    ##          "cloud": {
-    ##             "role": "WATSON3",
-    ##             "roleInstance": "CO4AEAP00000260"
-    ##          },
-    ##          "device": {}, 
-    ##          "correlation": {} 
-    ##      },
-    ##      "tags": [
-    ##        { "amazon.region" : "east2" },
-    ##        { "os.expid" : "wp:02df239" }
-    ##     ],
-    ##     "data": {  # https://github.com/microsoft/ApplicationInsights-JS/blob/master/shared/AppInsightsCommon/src/Telemetry/Trace.ts
-    #         "ver": ?
-    #         "message": string
-    #         "severityLevel": 
-    #         "properties": {}
-    #      }
-    ##   }
 
 

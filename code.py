@@ -163,6 +163,12 @@ class Application:
         self.ambientTemperature = self.environmentalSensor.temperature
         self.ambientHumidity = self.environmentalSensor.humidity
         self.ui.renderAmbient(self.ambientTemperature, self.ambientHumidity)
+        
+        timestamp = self.utcnow().isoformat()
+        self.telemetry.metric('ambient.temperature', self.ambientTemperature, timestamp=timestamp)
+        self.telemetry.metric('ambient.humidity', self.ambientHumidity, timestamp=timestamp)
+        self.telemetry.metric('ambient.pressure', self.environmentalSensor.pressure, timestamp=timestamp)
+        self.telemetry.metric('ambient.light', self.lightSensor.color_data[3], timestamp=timestamp)
         #if( self.connected ):
         #    self.io.send_data("ambient-temperature", self.ambientTemperature)
         #    self.io.send_data("ambient-humidity", self.ambientTemperature)
